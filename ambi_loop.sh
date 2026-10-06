@@ -1,7 +1,8 @@
 #!/system/bin/sh
-BRIGHT=80
-BOOST=25
-GREEN=80
+BRIGHT=100
+BOOST=70
+WHITE=40
+GREEN=75
 BLUE=85
 SPEED=80
 STEPS=4
@@ -18,7 +19,7 @@ savelog() {
 }
 
 echo "Start: $(date)" > $LOG
-echo "Version 4" >> $LOG
+echo "Version 5" >> $LOG
 ORIG=$(settings get system $KEY)
 case "$ORIG" in "#"*) ;; *) ORIG="#ffff0000,#ffff0000";; esac
 echo "Alte Farbe: $ORIG" >> $LOG
@@ -48,52 +49,48 @@ grab() {
     [ -n "$H" ] || return 1
     SIZE=$(stat -c %s $F)
     HDR=$((SIZE - W*H*4))
-    NL=$((W*4/96))
-    L1=$((NL*4/100)); L2=$((NL*34/100)); R1=$((NL*66/100)); R2=$((NL*96/100))
   fi
   cnt=$((cnt+1))
   [ $HDR -eq 12 ] || [ $HDR -eq 16 ] || { cnt=0; return 1; }
 }
 
 sample() {
-  lr=0; lg=0; lb=0; lw=0; rr=0; rg=0; rb=0; rw=0
-  for yp in 12 30 50 70 88; do
-    off=$((HDR + (H*yp/100)*W*4))
+  sr=0; sg=0; sb=0; sw=0
+  x0=$((W*$1/100)); n=$((W*42/100*4))
+  for yp in $2 $3 $4; do
+    off=$((HDR + ((H*yp/100)*W + x0)*4))
     i=0
-    for v in $(od -An -v -tu1 -w96 -j $off -N $((W*4)) $F 2>/dev/null | sed 's/^ *\([0-9]*\) *\([0-9]*\) *\([0-9]*\).*/\1 \2 \3/'); do
-      case $((i%3)) in
-        0) pr=$v;;
-        1) pg=$v;;
-        2) j=$((i/3))
-           if [ $j -ge $L1 ] && [ $j -le $L2 ]; then
-             mx=$((pr>pg?pr:pg)); mx=$((mx>v?mx:v))
-             mn=$((pr<pg?pr:pg)); mn=$((mn<v?mn:v))
-             w=$(((mx-mn)/4+16))
-             lr=$((lr+pr*w)); lg=$((lg+pg*w)); lb=$((lb+v*w)); lw=$((lw+w))
-           elif [ $j -ge $R1 ] && [ $j -le $R2 ]; then
-             mx=$((pr>pg?pr:pg)); mx=$((mx>v?mx:v))
-             mn=$((pr<pg?pr:pg)); mn=$((mn<v?mn:v))
-             w=$(((mx-mn)/4+16))
-             rr=$((rr+pr*w)); rg=$((rg+pg*w)); rb=$((rb+v*w)); rw=$((rw+w))
-           fi;;
+    for v in $(od -An -v -tu1 -w48 -j $off -N $n $F 2>/dev/null | sed 's/^ *\([0-9]*\) *\([0-9]*\) *\([0-9]*\).*/\1 \2 \3/'); do
+      case $i in
+        0) pr=$v; i=1;;
+        1) pg=$v; i=2;;
+        2) mx=$((pr>pg?pr:pg)); mx=$((mx>v?mx:v))
+           mn=$((pr<pg?pr:pg)); mn=$((mn<v?mn:v))
+           w=$(((mx-mn)/2+8))
+           sr=$((sr+pr*w)); sg=$((sg+pg*w)); sb=$((sb+v*w)); sw=$((sw+w))
+           i=0;;
       esac
-      i=$((i+1))
     done
   done
-  [ $lw -gt 0 ] && [ $rw -gt 0 ]
+  [ $sw -gt 0 ] || return 1
+  R=$((sr/sw)); G=$((sg/sw)); B=$((sb/sw))
 }
 
 tune() {
   mx=$((R>G?R:G)); mx=$((mx>B?mx:B))
   mn=$((R<G?R:G)); mn=$((mn<B?mn:B))
-  k=$((mn*BOOST/100))
-  if [ $mx -gt $k ]; then
-    R=$(((R-k)*mx/(mx-k))); G=$(((G-k)*mx/(mx-k))); B=$(((B-k)*mx/(mx-k)))
-  fi
-  if [ $mx -gt 0 ]; then
-    R=$((R*R/mx)); G=$((G*G/mx)); B=$((B*B/mx))
-  fi
-  R=$((R*BRIGHT/100)); G=$((G*GREEN/100*BRIGHT/100)); B=$((B*BLUE/100*BRIGHT/100))
+  if [ $mx -lt 1 ]; then R=0; G=0; B=0; return; fi
+  f=$((((mx-mn)*100/mx-5)*5)); f=$((f<0?0:f)); f=$((f>100?100:f))
+  k=$((mn*BOOST/100*f/100))
+  R=$(((R-k)*mx/(mx-k))); G=$(((G-k)*mx/(mx-k))); B=$(((B-k)*mx/(mx-k)))
+  R=$((R*R/mx)); G=$((G*G/mx)); B=$((B*B/mx))
+  mn=$((R<G?R:G)); mn=$((mn<B?mn:B))
+  s2=$(((mx-mn)*100/mx))
+  v=$((mx*mx/255))
+  v=$((v*(WHITE*100+(100-WHITE)*s2)/10000*BRIGHT/100))
+  R=$((R*v/mx)); G=$((G*v/mx*(100-(100-GREEN)*s2/100)/100)); B=$((B*v/mx*BLUE/100))
+  R=$((R>255?255:R)); G=$((G>255?255:G)); B=$((B>255?255:B))
+  if [ $R -lt 3 ] && [ $G -lt 3 ] && [ $B -lt 3 ]; then R=0; G=0; B=0; fi
 }
 
 fade() {
@@ -109,18 +106,19 @@ cLR=0; cLG=0; cLB=0; cRR=0; cRG=0; cRB=0
 frames=0
 fail=0
 while [ ! -e $STOP ]; do
-  if ! grab || ! sample; then
+  if ! grab || ! sample 3 14 28 42; then
     fail=$((fail+1))
     if [ $fail -ge 5 ]; then
-      echo "FEHLER: Bild lesen klappt nicht (W=$W H=$H SIZE=$SIZE HDR=$HDR lw=$lw rw=$rw)" >> $LOG
+      echo "FEHLER: Bild lesen klappt nicht (W=$W H=$H SIZE=$SIZE HDR=$HDR)" >> $LOG
       break
     fi
     sleep 1
     continue
   fi
   fail=0
-  R=$((lr/lw)); G=$((lg/lw)); B=$((lb/lw)); tune; tLR=$R; tLG=$G; tLB=$B
-  R=$((rr/rw)); G=$((rg/rw)); B=$((rb/rw)); tune; tRR=$R; tRG=$G; tRB=$B
+  tune; tLR=$R; tLG=$G; tLB=$B
+  sample 55 58 72 86
+  tune; tRR=$R; tRG=$G; tRB=$B
   frames=$((frames+1))
   if [ $frames -eq 1 ]; then
     echo "Bild: ${W}x${H}, Kopf $HDR" >> $LOG
@@ -137,7 +135,7 @@ while [ ! -e $STOP ]; do
     x=$(($1-$2)); x=$((x<0?-x:x))
     d=$((x>d?x:d))
   done
-  [ $d -lt 4 ] && continue
+  [ $d -lt 3 ] && continue
   wait
   nLR=$((cLR+(tLR-cLR)*SPEED/100)); nLG=$((cLG+(tLG-cLG)*SPEED/100)); nLB=$((cLB+(tLB-cLB)*SPEED/100))
   nRR=$((cRR+(tRR-cRR)*SPEED/100)); nRG=$((cRG+(tRG-cRG)*SPEED/100)); nRB=$((cRB+(tRB-cRB)*SPEED/100))
